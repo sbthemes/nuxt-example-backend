@@ -3,8 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Auth\Events\Verified;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Validation\Rules\Password as RulesPassword;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -56,6 +60,51 @@ class AuthController extends Controller
         }
 
         return response()->noContent();
+    }
+
+    public function forgotPassword()
+    {
+        $data = request()->validate([
+            'email' => ['required', 'email:filter']
+        ]);
+
+        $status = Password::sendResetLink([
+            'email' =>  $data['email']
+        ]);
+
+        if ($status !== Password::RESET_LINK_SENT) {
+            throw ValidationException::withMessages([__($status)]);
+        }
+
+        return response()->json(['success' => 'Please check your email inbox (and spam) for a password reset link.']);
+    }
+
+    public function resetPassword()
+    {
+        request()->validate([
+            'token'     => ['required',],
+            'email'     => ['required', 'email'],
+            'password'  => ['required', RulesPassword::min(8), 'confirmed']
+        ]);
+
+        $status = Password::reset(
+            request()->only('email', 'password', 'password_confirmation', 'token'),
+            function ($user, $password) {
+                $user->forceFill([
+                    'password' => bcrypt($password)
+                ])->setRememberToken(Str::random(60));
+
+                $user->save();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            throw ValidationException::withMessages([__($status)]);
+        }
+
+        return response()->json(['success' => 'Password reset successfully.']);
     }
 
     public function resendEmailVerificationLink()
